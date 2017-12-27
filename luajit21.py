@@ -5,6 +5,7 @@ import gdbutils
 import ngxlua
 import re
 import time
+from collections import defaultdict
 
 typ = gdbutils.typ
 null = gdbutils.null
@@ -1047,8 +1048,7 @@ def dump_table(t):
                 out("\tslot[%d]\t(next: ---)\n" % i)
             h = hashkey(k)
             if hash:
-                out("\tkey: (hash: 0x%X -> natural slot: %d)\n"
-                    % (int(h), h & t['hmask']))
+                out("\tkey: (hash: 0x%X -> natural slot: %d)\n" % (int(h), h & t['hmask']))
             else:
                 out("\tkey:\n")
             dump_tvalue(k)
@@ -1092,9 +1092,10 @@ def dump_tvalue(o, deep=False):
     elif tvisstr(o):
         gcs = strV(o)
         try:
-            out("\t\tstring: \"%s\" (len %d)\n" % (lstr2str(gcs), int(gcs['len'])))
+            out("\t\tstring: \"%s\" (len %d)\n" % (lstr2str(gcs).replace('\0', r'\0'),
+                                                   int(gcs['len'])))
         except:
-            pass
+            out("\t\t[[python error reading string]]")
 
     elif tviscdata(o):
         mL = get_global_L()
@@ -1272,15 +1273,13 @@ class lchecktab(gdb.Command):
                 steps.append(collisdeslot)
                 if collisdeslot > nhmask or collisdeslot < 0:
                     if verblevel >= 1:
-                        out("** nextslot %d on out of hash table! **\n"
-                            % collisdeslot)
+                        out("** nextslot %d on out of hash table! **\n" % collisdeslot)
                     wildslots += 1
                     break
                 nextnode = noderef(node[collisdeslot]['next'])
                 if not nextnode:
                     if verblevel >= 1:
-                        out("** chain %r ended before reaching slot %d **\n"
-                            % (steps, i))
+                        out("** chain %r ended before reaching slot %d **\n" % (steps, i))
                     brokenslots += 1
                     break
                 collisdeslot = int(nextnode - node)
@@ -1296,7 +1295,7 @@ class lchecktab(gdb.Command):
         out("counts: %r\n" % counts)
         out("Summary: %d slots, %d nil values, %d used slots\n" %
             (nhmask+1, nilslots, usedslots))
-        out("Sroblems: %d short chains, %d wrong chains\n" %
+        out("Problems: %d short chains, %d wrong chains\n" %
             (brokenslots, wildslots))
         if verblevel >= 1:
             for k, v in counts.items():
