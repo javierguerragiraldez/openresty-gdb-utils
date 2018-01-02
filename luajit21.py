@@ -334,6 +334,14 @@ def proto_varinfo(pt):
 def lua_gettop(L):
     return int(L['top'] - L['base'])
 
+
+def hashkey(key):
+    h = None
+    if tvisstr(key):
+        h = strV(key)['hash']
+    return h
+
+
 def stkindex2adr(L, idx):
     """
     Given L and a stack index, returns the corresponding TValue object.
@@ -928,7 +936,19 @@ def dump_table(t):
         k = nn['key']
         v = nn['val'].address
         if not tvisnil(v):
-            out("\tkey:\n")
+            nextnode = noderef(nn['next'])
+            if nextnode:
+                nextslot = nextnode - node
+                out("\tslot[%d]\t(next: (Node*)(0x%x) -> node[%d]])\n" %
+                    (i, int(nextnode.cast(typ("uintptr_t"))), nextslot))
+            else:
+                out("\tslot[%d]\t(next: ---)\n" % i)
+            h = hashkey(k)
+            if hash:
+                out("\tkey: (hash: 0x%X -> natural slot: %d)\n"
+                    % (int(h), h & t['hmask']))
+            else:
+                out("\tkey:\n")
             dump_tvalue(k)
             out("\tvalue:\n")
             dump_tvalue(v)
@@ -970,8 +990,8 @@ def dump_tvalue(o, deep=False):
     elif tvisstr(o):
         gcs = strV(o)
         try:
-             out("\t\tstring: \"%s\" (len %d)\n" % (lstr2str(gcs), \
-                 int(gcs['len'])))
+            out("\t\tstring: \"%s\" (len %d)\n"
+                % (lstr2str(gcs).replace('\0', r'\0'), int(gcs['len'])))
         except:
                pass
 
@@ -1096,6 +1116,92 @@ Usage: lval tv"""
         dump_tvalue(o, True)
 
 lval()
+
+
+class lchecktab(gdb.Command):
+    """This command does some sanity checks on a Lua table"""
+
+    def __init__(self):
+        super(lchecktab, self).__init__("lchecktab", gdb.COMMAND_USER)
+
+    def invoke(self, args, from_tty):
+        argv = gdb.string_to_argv(args)
+        if len(argv) not in (1, 2):
+            raise gdb.GdbError("Usage: lval tv [verblevel]")
+
+        verblevel = int(argv[1]) if len(argv) == 2 else 2
+
+        m = re.match('0x[0-9a-fA-F]+', argv[0])
+        if m:
+            t = gdb.Value(int(argv[0], 16)).cast(typ("GCtab*"))
+        else:
+            t = gdb.parse_and_eval(argv[0])
+
+        if not t:
+            raise gdb.GdbError("table argument empty")
+            return
+
+        if int(t['gct']) != 11:
+            raise gdb.GdbError("need a table, got a %s" % str(t.type))
+
+        nhmask = int(t['hmask'])
+        node = noderef(t['node'])
+        nilslots = 0
+        usedslots = 0
+        wildslots = 0
+        brokenslots = 0
+        counts = defaultdict(int)
+        for i in xrange(nhmask + 1):
+            nn = node[i]
+            k = nn['key']
+            v = nn['val'].address
+
+            if tvisnil(v):
+                nilslots += 1
+                continue
+            else:
+                usedslots += 1
+
+            if verblevel >= 2:
+                out("slot [%d]: " % i)
+            steps = []
+            collisdeslot = int(hashkey(k) & t['hmask'])
+            while collisdeslot != i:
+                steps.append(collisdeslot)
+                if collisdeslot > nhmask or collisdeslot < 0:
+                    if verblevel >= 1:
+                        out("** nextslot %d on out of hash table! **\n"
+                            % collisdeslot)
+                    wildslots += 1
+                    break
+                nextnode = noderef(node[collisdeslot]['next'])
+                if not nextnode:
+                    if verblevel >= 1:
+                        out("** chain %r ended before reaching slot %d **\n"
+                            % (steps, i))
+                    brokenslots += 1
+                    break
+                collisdeslot = int(nextnode - node)
+
+            steps.append(collisdeslot)
+            counts[len(steps)] += 1
+            nextnode = noderef(nn['next'])
+            if verblevel >= 2:
+                out("%r" % steps)
+                if nextnode:
+                    out(" |> %d" % int(nextnode - node))
+                out("\n")
+        out("counts: %r\n" % counts)
+        out("Summary: %d slots, %d nil values, %d used slots\n" %
+            (nhmask+1, nilslots, usedslots))
+        out("Sroblems: %d short chains, %d wrong chains\n" %
+            (brokenslots, wildslots))
+        if verblevel >= 1:
+            for k, v in counts.items():
+                out("\t%d keys reachable by %d steps\n" % (v, k))
+
+lchecktab()
+
 
 class lproto(gdb.Command):
     """This command prints out all the Lua prototypes (the GCproto* pointers) filtered by the file name and file line number where the function is defined.
@@ -1715,8 +1821,8 @@ irtype = [
 ]
 
 def ridsp_name(ridsp, ins):
-    rid = (ridsp & 0xff)
-    slot = (ridsp >> 8)
+    rid = int(ridsp & 0xff)
+    slot = int(ridsp >> 8)
     if rid == 253 or rid == 254:
         if slot == 0 or slot == 255:
             return " {sink"
@@ -2714,7 +2820,7 @@ class lgcpath(lgcstat):
         self.baseclass.init_sizeof()
         self.visited.clear()
 
-        # step 1: DFS registry 
+        # step 1: DFS registry
         g = G(L)
         self.path_root = 1
         self.visit_tval(g['registrytv'], g)
@@ -2862,7 +2968,7 @@ class lgcpath(lgcstat):
     def print_proto(self, proto, g):
         name = proto_chunkname(proto)
         if name:
-            path = lstr2str(name) 
+            path = lstr2str(name)
             out("proto(%s:%d)" % (path, int(proto['firstline'])))
         else:
             out("proto ")
