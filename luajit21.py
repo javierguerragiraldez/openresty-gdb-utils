@@ -857,8 +857,8 @@ Usage: ltabgets tab field"""
 
     def invoke(self, args, from_tty):
         argv = gdb.string_to_argv(args)
-        if len(argv) != 2:
-            raise gdb.GdbError("Usage: ltabgets tab field")
+        if len(argv) < 2:
+            raise gdb.GdbError("Usage: ltabgets tab field ...")
 
         m = re.match('0x[0-9a-fA-F]+', argv[0])
         if m:
@@ -878,17 +878,14 @@ Usage: ltabgets tab field"""
         else:
             tab = tabV(val)
 
-        key = argv[1]
-
-        tv = lj_tab_getstr(tab, key)
-        if tv:
-            out("(TValue*)%#x\n" % ptr2int(tv))
+        for key in argv[1:]:
+            tv = lj_tab_getstr(tab, key)
+            if not tv:
+                raise gdb.GdbError("Key \"%s\" not found." % key)
+            out("..[%s] => (TValue*)%#x\n" % (key, ptr2int(tv)))
             dump_tvalue(tv)
+            tab = tabV(tv)
 
-        else:
-            raise gdb.GdbError("Key \"%s\" not found." % key)
-
-        # print "g: ", hex(int(L['glref']['ptr32']))
 
 ltabgets()
 
@@ -989,6 +986,7 @@ CTSHIFT_NUM = 28
 CT_HASSIZE = 5
 CT_ATTRIB = 8
 CTMASK_CID = 0x0000ffff
+CTF_VLA = 0x00100000
 
 
 def ctype_type(info):
@@ -1001,6 +999,10 @@ ctype_names = ['num', 'struct', 'ptr', 'array',
 
 def cdataptr(cd):
     return (cd + 1).cast(typ("void*"))
+
+
+def cdatavar(cd):
+    return cd.cast(typ('GCcdataVar*')) - 1
 
 
 def tvislightud(o):
@@ -1047,12 +1049,12 @@ def dump_table(t):
             else:
                 out("\tslot[%d]\t(next: ---)\n" % i)
             h = hashkey(k)
-            if hash:
+            if h:
                 out("\tkey: (hash: 0x%X -> natural slot: %d)\n" % (int(h), h & t['hmask']))
             else:
                 out("\tkey:\n")
             dump_tvalue(k)
-            out("\tvalue:\n")
+            out("\tvalue: (TValue*)%#x\n" % ptr2int(v))
             dump_tvalue(v)
 
 
@@ -1085,41 +1087,100 @@ def dump_udata(ud, data=False):
         out("\"\n")
 
 
+def dump_cdata(o, deep=False):
+    mL = get_global_L()
+    cts = ctype_cts(mL)
+    cd = cdataV(o)
+    ptr = cdataptr(cd)
+    out("\t\ttype cdata\n")
+    out("\t\t\tcdata object: (GCcdata*)0x%x\n" % ptr2int(cd))
+    out("\t\t\tcdata value pointer: (void*)0x%x\n" % ptr2int(ptr))
+
+    cty = ctype_get(cts, cd['ctypeid'])
+    if cty['info'] & CTF_VLA:
+        cdv = cdatavar(cd)        # cd.cast(typ('GCcdataVar*')) - 1
+        out("\t\t\tVLA cdatav: offset: %d, extra: %d, len: %d\n" %
+            (int(cdv['offset']), int(cdv['extra']), int(cdv['len'])))
+    out("\t\t\tctype id: %d\n" % cd['ctypeid'])
+    out("\t\t\tctype: %s\n" % ctype_name(cd['ctypeid']))
+    # dump_ctype(cd['ctypeid'])
+
+
+def dump_ctype(id, seen=None):
+    seen = seen or set()
+    id = int(id)
+    if id in seen:
+        return
+    seen.add(id)
+
+    cty = ctype_get(ctype_cts(get_global_L()), id)
+    out("\t\t\tctype object: (CType*)0x%x\n" % ptr2int(cty))
+    t = int(ctype_type(cty['info']))
+    # print "ctype type %d\n" % t
+    if ctype_names[t]:
+        out("\t\t\tctype type: %s\n" % ctype_names[t])
+    else:
+        err("\t\t\tunknown ctype type: %d\n" % t)
+    s = strref(cty['name'])
+    if s:
+        out("\t\t\t\tctype element name: %s\n" % lstr2str(s))
+
+    cid = cty['info'] & CTMASK_CID
+    out("\t\t\tcid: %d, sib: %d, next: %d\n" %
+        (cid, cty['sib'], cty['next']))
+    if cid:
+        out("\t\t\tcid: %d\n" % cid)
+        dump_ctype(cid, seen)
+    if cty['sib']:
+        out("\t\t\tsib: %d\n" % cty['sib'])
+        dump_ctype(cty['sib'], seen)
+    if cty['next']:
+        out("\t\t\tnext: %d\n" % cty['next'])
+        dump_ctype(cty['next'], seen)
+
+
+_ctype_names = {}
+
+
+def ctype_name(id):
+    id = int(id)
+    if id in _ctype_names:
+        return _ctype_names[id]
+
+    _ctype_names[id] = "cid(%d)" % id
+
+    cty = ctype_get(ctype_cts(get_global_L()), id)
+    t = int(ctype_type(cty['info']))
+    name = strref(cty['name'])
+    cid = cty['info'] & CTMASK_CID
+    sib = cty['sib']
+
+    if name:
+        name = lstr2str(name)
+        _ctype_names[id] = name
+
+    fullname = ((ctype_names[t] or '')
+                + (' %r' % name if name else '')
+                + (' (%s)' % ctype_name(cid) if cid else '')
+                + (', %s' % ctype_name(sib) if sib else ''))
+    _ctype_names[id] = fullname
+    return fullname
+
+
 def dump_tvalue(o, deep=False):
     if tvisudata(o):
         dump_udata(udataV(o))
 
     elif tvisstr(o):
         gcs = strV(o)
-        try:
-            out("\t\tstring: \"%s\" (len %d)\n" % (lstr2str(gcs).replace('\0', r'\0'),
-                                                   int(gcs['len'])))
-        except:
-            out("\t\t[[python error reading string]]")
+        out("\t\tstring: %r (len %d)\n" % (lstr2str(gcs), int(gcs['len'])))
 
     elif tviscdata(o):
-        mL = get_global_L()
-        cts = ctype_cts(mL)
-        cd = cdataV(o)
-        ptr = cdataptr(cd)
-        out("\t\ttype cdata\n")
-        out("\t\t\tcdata object: (GCcdata*)0x%x\n" % ptr2int(cd))
-        out("\t\t\tcdata value pointer: (void*)0x%x\n" % ptr2int(ptr))
-        d = ctype_get(cts, cd['ctypeid'])
-        out("\t\t\tctype object: (CType*)0x%x\n" % ptr2int(d))
-        out("\t\t\tctype size: %d byte(s)\n" % int(d['size']))
-        t = int(ctype_type(d['info']))
-        # print "ctype type %d\n" % t
-        if ctype_names[t]:
-            out("\t\t\tctype type: %s\n" % ctype_names[t])
-        else:
-            err("\t\t\tunknown ctype type: %d\n" % t)
-        s = strref(d['name'])
-        if s:
-            out("\t\t\t\tctype element name: %s\n" % lstr2str(s))
+        dump_cdata(o, deep)
 
     elif tvislightud(o):
-        out("\t\tlight user data: (void*)0x%x\n" % ptr2int(gcrefp(o['gcr'], 'void')))
+        # out("\t\tlight user data: (void*)0x%x\n" % ptr2int(gcrefp(o['gcr'], 'void')))
+        out("\t\tlight user data: (void*)0x%x\n" % int(o['u64'] & (2**48-1)))
         return
 
     elif tvisint(o):
@@ -1221,16 +1282,17 @@ Usage: lval tv"""
 lval()
 
 
-class lchecktab(gdb.Command):
-    """This command does some sanity checks on a Lua table"""
-
+class ltabkeys(gdb.Command):
+    """This command prints the table keys"""
     def __init__(self):
-        super(lchecktab, self).__init__("lchecktab", gdb.COMMAND_USER)
+        super(ltabkeys, self).__init__("ltabkeys", gdb.COMMAND_USER)
 
     def invoke(self, args, from_tty):
         argv = gdb.string_to_argv(args)
-        if len(argv) not in (1, 2):
-            raise gdb.GdbError("Usage: lval tv [verblevel]")
+        if argv[0].startswith('/'):
+            opts = argv.pop(0)[1:]
+        if len(argv) != 1:
+            raise gdb.GdbError("Usage: ltabkeys [/opts] <GCtab*>")
 
         verblevel = int(argv[1]) if len(argv) == 2 else 2
 
@@ -1249,7 +1311,39 @@ class lchecktab(gdb.Command):
 
         nhmask = int(t['hmask'])
         node = noderef(t['node'])
+        for i in xrange(nhmask + 1):
+            nn = node[i]
+            k = nn['key']
+            v = nn['val'].address
+
+            if tvisnil(v):
+                continue
+
+            if tvisstr(k):
+                    gcs = strV(k)
+                    try:
+                        out("\"%s\"\n" % lstr2str(gcs).replace('\0', r'\0'))
+                    except:
+                        out("\t\t[[python error reading string]]")
+
+ltabkeys()
+
+
+class lchecktab(gdb.Command):
+    """This command does some sanity checks on a Lua table"""
+
+    def __init__(self):
+        super(lchecktab, self).__init__("lchecktab", gdb.COMMAND_USER)
+
+    @staticmethod
+    def check_table(t, verblevel=0):
+        if int(t['gct']) != 11:
+            raise gdb.GdbError("need a table, got a %s" % str(t.type))
+
+        nhmask = int(t['hmask'])
+        node = noderef(t['node'])
         nilslots = 0
+        nilkeys = 0
         usedslots = 0
         wildslots = 0
         brokenslots = 0
@@ -1267,41 +1361,225 @@ class lchecktab(gdb.Command):
 
             if verblevel >= 2:
                 out("slot [%d]: " % i)
-            steps = []
-            collisdeslot = int(hashkey(k) & t['hmask'])
-            while collisdeslot != i:
-                steps.append(collisdeslot)
-                if collisdeslot > nhmask or collisdeslot < 0:
-                    if verblevel >= 1:
-                        out("** nextslot %d on out of hash table! **\n" % collisdeslot)
-                    wildslots += 1
-                    break
-                nextnode = noderef(node[collisdeslot]['next'])
-                if not nextnode:
-                    if verblevel >= 1:
-                        out("** chain %r ended before reaching slot %d **\n" % (steps, i))
-                    brokenslots += 1
-                    break
-                collisdeslot = int(nextnode - node)
+            if not k or tvisnil(k):
+                if verblevel >= 2:
+                    out("nil key\n")
+                nilkeys += 1
+                continue
 
-            steps.append(collisdeslot)
-            counts[len(steps)] += 1
+            steps = []
+            if hashkey(k):
+                collisdeslot = int(hashkey(k) & t['hmask'])
+                while collisdeslot != i:
+                    steps.append(collisdeslot)
+                    if collisdeslot > nhmask or collisdeslot < 0:
+                        if verblevel >= 1:
+                            out("** nextslot %d on out of hash table! **\n" % collisdeslot)
+                        wildslots += 1
+                        break
+                    nextnode = noderef(node[collisdeslot]['next'])
+                    if not nextnode:
+                        if verblevel >= 1:
+                            out("** chain %r ended before reaching slot %d **\n" % (steps, i))
+                        brokenslots += 1
+                        break
+                    collisdeslot = int(nextnode - node)
+
+                steps.append(collisdeslot)
+                counts[len(steps)] += 1
             nextnode = noderef(nn['next'])
             if verblevel >= 2:
                 out("%r" % steps)
                 if nextnode:
                     out(" |> %d" % int(nextnode - node))
                 out("\n")
-        out("counts: %r\n" % counts)
+        # out("counts: %r\n" % counts)
         out("Summary: %d slots, %d nil values, %d used slots\n" %
             (nhmask+1, nilslots, usedslots))
-        out("Problems: %d short chains, %d wrong chains\n" %
-            (brokenslots, wildslots))
+        out("Problems: %d nil keys %d short chains, %d wrong chains\n" %
+            (nilkeys, brokenslots, wildslots))
         if verblevel >= 1:
             for k, v in counts.items():
                 out("\t%d keys reachable by %d steps\n" % (v, k))
 
+    def invoke(self, args, from_tty):
+        argv = gdb.string_to_argv(args)
+        if len(argv) not in (1, 2):
+            raise gdb.GdbError("Usage: lval tv [verblevel]")
+
+        verblevel = int(argv[1]) if len(argv) == 2 else 2
+
+        t = gdb.parse_and_eval(argv[0])
+        if str(t.type) != 'GCtab *':
+            t = tabV(t)
+
+        if not t:
+            raise gdb.GdbError("table argument empty")
+            return
+
+        self.check_table(t, verblevel)
+
+
 lchecktab()
+
+
+class lrucheck(gdb.Command):
+    """specific check for lrucache object"""
+
+    def __init__(self):
+        super(lrucheck, self).__init__('lrucheck', gdb.COMMAND_USER)
+        self.queues = {}
+
+    @classmethod
+    def tv2py(cls, tv, toint=False):
+        if tvisstr(tv):
+            return lstr2str(strV(tv))
+        if tvisnumber(tv):
+            return int(float(tv['n']))
+        if toint and tviscdata(tv):
+            return ptr2int(cdataptr(cdataV(tv)))
+        return tv
+
+    @classmethod
+    def gctab2dict(cls, t):
+        o = {}
+        node = noderef(t['node'])
+        for i in xrange(int(t['hmask']) + 1):
+            nn = node[i]
+            val = nn['val'].address
+            if not tvisnil(val):
+                key = cls.tv2py(nn['key'].address, True)
+                if key in o:
+                    out("repeated key: %r\n" % key)
+                    out("previous value:")
+                    dump_tvalue(o[key])
+                    out("new value:")
+                    dump_tvalue(val)
+                o[key] = cls.tv2py(val)
+        return o
+
+    def add_queue(self, qname):
+        q = self.obj[qname]
+        cd = cdataV(q)
+        cdv = cdatavar(cd)
+        self.queues[qname] = {
+            'base': cdataptr(cd).cast(typ('uintptr_t *')),
+            'len': int(int(cdv['len']) / 24),         # TODO: actually get element size
+        }
+
+    @classmethod
+    def qprev(cls, itm):
+        return (itm+1).dereference().cast(typ('uintptr_t *'))
+
+    @classmethod
+    def qnext(cls, itm):
+        return (itm+2).dereference().cast(typ('uintptr_t *'))
+
+    @staticmethod
+    def showp(p):
+        return "p: %#x(%s)" % (ptr2int(p), str(p.type))
+
+    def itemnum(self, itm):
+        return int((itm - self.queues['free_queue']['base']) / 3)
+
+    def node2int(self, node):
+        return ptr2int(cdataptr(cdataV(node)).cast(typ('uintptr_t *')).dereference())
+
+    def check_queue(self, qname):
+        out("%s:  " % qname)
+        qptr = self.queues[qname]['base']
+        qlen = self.queues[qname]['len']
+
+        tail = self.qprev(qptr)
+        head = self.qnext(qptr)
+
+        out("%#x [head: %#x[%d], tail: %#x[%d]]\n" %
+            (ptr2int(qptr),
+             ptr2int(head), self.itemnum(head),
+             ptr2int(tail), self.itemnum(tail)))
+
+        if tail == head == qptr:
+            out("empty queue\n")
+            return
+
+        n = 0
+        itm = head
+        freeitms = set(range(1, self.queues['free_queue']['len']))
+        while True:
+            itemnum = self.itemnum(itm)
+            if itemnum not in freeitms:
+                out(" %d not in free set!\n" % itemnum)
+                break
+            freeitms.remove(itemnum)
+            if self.qprev(self.qnext(itm)) != itm:
+                out(" next doesn't link back\n")
+                break
+            if self.qnext(self.qprev(itm)) != itm:
+                out(" prev doesn't go here (??)\n")
+                break
+            n += 1
+            if itm == tail:
+                break
+            itm = self.qnext(itm)
+        out("%d items\n" % n)
+        out("unmentioned items: %r\n" % freeitms)
+
+    def invoke(self, args, from_tty):
+        argv = gdb.string_to_argv(args)
+        assert len(argv) == 1, "Usage: lrucheck <table tv>"
+        self_t = gdb.parse_and_eval(argv[0])
+        if str(self_t.type) != 'GCtab *':
+            self_t = tabV(self_t)
+
+        self.obj = self.gctab2dict(self_t)
+        out("self: %r\n" % self.obj)
+
+        self.hasht = self.gctab2dict(tabV(self.obj['hasht']))
+        out("hasht (%d)\n" % len(self.hasht))
+        lchecktab.check_table(tabV(self.obj['hasht']))
+
+        self.key2node = self.gctab2dict(tabV(self.obj['key2node']))
+        out("key2node (%d)\n" % len(self.key2node))
+        lchecktab.check_table(tabV(self.obj['key2node']))
+
+        self.node2key = self.gctab2dict(tabV(self.obj['node2key']))
+        out("node2key (%d)\n" % len(self.node2key))
+        lchecktab.check_table(tabV(self.obj['node2key']))
+
+        for k, v in self.hasht.items():
+            if k not in self.key2node:
+                out("key %r is a key in hasht but not in key2node\n" % k)
+                out("associated value: %s\n" % self.showp(v))
+                dump_tvalue(v)
+
+        for k, v in self.node2key.items():
+            if v not in self.key2node:
+                out("key %r is a value in node2key but not a key in key2node\n" % v)
+            v2k = self.node2int(self.key2node[v])
+            if v2k != k:
+                out("v2k: %s != k: %x\n" % (self.showp(v2k), k))
+                break
+
+        for k, v in self.key2node.items():
+            intV = self.node2int(v)
+            if intV not in self.node2key:
+                out("node %r is a value in key2node but not a key in node2key\n" % intV)
+
+        self.add_queue('free_queue')
+        self.add_queue('cache_queue')
+        self.check_queue('free_queue')
+        self.check_queue('cache_queue')
+
+        baseint = ptr2int(self.queues['free_queue']['base'])
+        out("key2node missing int values: %r\n" %
+            (set(range(1, len(self.key2node))) -
+             {int((self.node2int(node) - baseint) / 24) for node in self.key2node.values()}))
+        out("node2key missing int keys: %r\n" %
+            (set(range(1, len(self.node2key))) -
+             {int((nodeint - baseint) / 24) for nodeint in self.node2key.keys()}))
+
+
+lrucheck()
 
 
 class lproto(gdb.Command):
