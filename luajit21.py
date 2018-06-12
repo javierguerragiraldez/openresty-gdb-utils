@@ -277,7 +277,12 @@ def lj_debug_frame(L, base, level, bot):
 
 
 def frame_func(f):
-    return frame_gc(f)['fn'].address
+    fn = frame_gc(f)['fn'].address
+    try:
+        isluafunc(fn)
+    except gdb.MemoryError:
+        return None
+    return fn
 
 
 def isluafunc(fn):
@@ -330,7 +335,10 @@ def debug_framepc(L, T, fn, pt, nextframe):
     if not nextframe:
         cf = cframe_raw(L['cframe'])
         # print("cf 0x%x" % ptr2int(cf))
-        if not cf or cframe_pc(cf) == cframe_L(cf):
+        try:
+            if not cf or cframe_pc(cf) == cframe_L(cf):
+                return NO_BCPOS
+        except:
             return NO_BCPOS
         ins = cframe_pc(cf)
         # print("cframe pc: [0x%x]" % ptr2int(ins))
@@ -1041,18 +1049,19 @@ def dump_table(t):
         k = nn['key']
         v = nn['val'].address
         if not tvisnil(v):
-            nextnode = noderef(nn['next'])
-            if nextnode:
-                nextslot = nextnode - node
-                out("\tslot[%d]\t(next: (Node*)(0x%x) -> node[%d]])\n" %
-                    (i, int(nextnode.cast(typ("uintptr_t"))), nextslot))
-            else:
-                out("\tslot[%d]\t(next: ---)\n" % i)
-            h = hashkey(k)
-            if h:
-                out("\tkey: (hash: 0x%X -> natural slot: %d)\n" % (int(h), h & t['hmask']))
-            else:
-                out("\tkey:\n")
+            #nextnode = noderef(nn['next'])
+            #if nextnode:
+                #nextslot = nextnode - node
+                #out("\tslot[%d]\t(next: (Node*)(0x%x) -> node[%d]])\n" %
+                    #(i, int(nextnode.cast(typ("uintptr_t"))), nextslot))
+            #else:
+                #out("\tslot[%d]\t(next: ---)\n" % i)
+            #h = hashkey(k)
+            #if h:
+                #out("\tkey: (hash: 0x%X -> natural slot: %d)\n" % (int(h), h & t['hmask']))
+            #else:
+                #out("\tkey:\n")
+            out("\tkey:\n")
             dump_tvalue(k)
             out("\tvalue: (TValue*)%#x\n" % ptr2int(v))
             dump_tvalue(v)
@@ -4638,6 +4647,23 @@ Usage: ltb"""
 ltb()
 
 
+def backtrace(L, f):
+    typeps = ['FRAME_LUA', 'FRAME_C', 'FRAME_CONT', 'FRAME_VARG',
+              'FRAME_LUAP', 'FRAME_CP', 'FRAME_PCALL', 'FRAME_PCALLH']
+
+    def ftyp(f):
+        t = frame_typep(f)
+        if 0 <= t < len(typeps):
+            return typeps[t]
+        return '--'
+
+    stack = mref(L['stack'], 'TValue')
+    while f > stack and frame_type(f) < 3:
+        out("f: %d, type: %d, typep: %d, %s, prev: %d\n" %
+            (f-L['base'], frame_type(f), frame_typep(f), ftyp(f), frame_prev(f)-L['base']))
+        f = frame_prev(f)
+
+
 class ldumpstack(gdb.Command):
     """This command takes a lua_State pointer and dumps all contents from
 it's stack.
@@ -4649,16 +4675,31 @@ Usage: ldumpstack (lua_State *)"""
     def invoke(self, args, from_tty):
         argv = gdb.string_to_argv(args)
 
-        if len(argv) != 1:
-            raise gdb.GdbError("1 argument expected!\nusage: ltb <lua_State *>")
+        #if len(argv) != 1:
+            #raise gdb.GdbError("1 argument expected!\nusage: ltb <lua_State *>")
 
-        L = gdbutils.parse_ptr(argv[0], "lua_State*")
+        #L = gdbutils.parse_ptr(argv[0], "lua_State*")
+        L = get_global_L()
 
         top = lua_gettop(L)
 
-        for x in range(top):
-            out("index = %d\n" % (x + 1))
-            tv = stkindex2adr(L, x + 1)
-            gdb.execute("lval 0x%x" % ptr2int(tv))
+        #for x in range(top):
+            #out("index = %d\n" % (x + 1))
+            #tv = stkindex2adr(L, x + 1)
+            #gdb.execute("lval 0x%x" % ptr2int(tv))
+
+        stack = mref(L['stack'], 'TValue')
+        base = L['base']
+        top = L['top']
+        maxstack = mref(L['maxstack'], 'TValue')
+        #out("stack: %r, base=stack+%r, top=base+%d, total slots:%d, interesting:%d\n" %
+            #(stack, base-stack, top-base, maxstack-stack, top-stack))
+
+        for i in range(top-stack):
+            out("%4d:%016X" % (i-(base-stack), stack[i]['u64']))
+            dump_tvalue(stack[i])
+
+        backtrace(L, base-1)
+
 
 ldumpstack()
