@@ -645,7 +645,12 @@ Usage: lbt [L]
                     pass
 
             if not base:
-                raise gdb.GdbError("jit base is NULL (trace #%d)" % int(T['traceno']))
+                traceno = int(T['traceno'])
+                print("jit base is NULL (error handler?)")
+                print("(trace #%d): %s" % (traceno, trace_info(traceno)['line']))
+                #print("trying with L->base instead of jit_base")
+
+                base = L['base']
             bt = lj_debug_dumpstack(L, T, 30, base, full)
 
         else:
@@ -1182,7 +1187,13 @@ def dump_tvalue(o, deep=False):
 
     elif tvisstr(o):
         gcs = strV(o)
-        out("\t\tstring: %r (len %d)\n" % (lstr2str(gcs), int(gcs['len'])))
+        stringval = lstr2str(gcs)
+        strlen = int(gcs['len'])
+        if not deep and strlen > 2048:
+            out("\t\tstring (len %d): %r ... %d bytes more\n" %
+                (strlen, stringval[:2048], strlen - 2048))
+        else:
+            out("\t\tstring (len %d): %r\n" % (strlen, stringval))
 
     elif tviscdata(o):
         dump_cdata(o, deep)
@@ -1848,6 +1859,34 @@ def trace_findfree(J):
         freetrace += 1
 
     return freetrace
+
+
+def trace_info(traceno):
+    L = get_global_L()
+    g = G(L)
+    J = G2J(g)
+    if traceno >= int(J['sizetrace']):
+        return None
+    T = traceref(J, traceno)
+    if not T:
+        return None
+
+    pt = gcref(T['startpt'])['pt'].address
+    pc = proto_bcpos(pt, mref(T['startpc'], "BCIns"))
+
+    line = lj_debug_line(pt, pc)
+    name = proto_chunkname(pt)
+    if name:
+        path = lstr2str(name)
+        line = "%s:%d\n" % (path, line)
+
+    return {
+        'szmcode': int(T['szmcode']),
+        'mcode': ptr2int(T['mcode']),
+        'startproto': pt,
+        'startbc': pc,
+        'line': line,
+    }
 
 
 class ltrace(gdb.Command):
