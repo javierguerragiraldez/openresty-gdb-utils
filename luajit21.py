@@ -3,9 +3,40 @@ import sys
 import gdb
 import gdbutils
 import ngxlua
+import os
 import re
 import time
-from collections import defaultdict
+from collections import defaultdict, namedtuple
+
+
+Registers = namedtuple('Registers', [
+    'BASE', 'KBASE', 'PC'
+    'RA', 'RB', 'RC'
+    ])
+
+architecture = os.uname().machine
+if architecture == 'x86_64':
+    Regs = Registers(
+        BASE='$edx',
+        KBASE='$r15d',
+        PC='$ebx',
+        RA='$ecx',
+        RB='$ebp',
+        RC='$eax',      # also used as 'RD'
+        RCL='$al',
+    )
+
+elif architecture == 'aarch64':
+    Regs = Registers(
+        BASE='$x19',
+        KBASE='$x20',
+        PC='$x21',
+        RA='$x27',
+        RB='$x17',
+        RC='$x28',
+        RCL='$w28',     # known as RCw in arm64.dasc
+    )
+
 
 typ = gdbutils.typ
 null = gdbutils.null
@@ -82,6 +113,7 @@ def LJ_TISNUM():
 
 def LJ_TISGCV():
     return newval("unsigned int", 1 + ~4)
+
 
 BC_RETM = 73
 BC_RET = 74
@@ -426,6 +458,7 @@ def stkindex2adr(L, idx):
         assert -idx <= L['top'] - L['base']
         return L['top'] + idx
 
+
 VARNAME_END = 0
 VARNAME__MAX = 7
 
@@ -671,7 +704,7 @@ Usage: lbt [L]
                 if vmstate == ~LJ_VMST_INTERP or vmstate == ~LJ_VMST_C or vmstate == ~LJ_VMST_GC:
                     if vmstate == ~LJ_VMST_INTERP:
                         # out("Fetching edx...")
-                        base = gdb.parse_and_eval("$edx").cast(typ("TValue*"))
+                        base = gdb.parse_and_eval(Regs.BASE).cast(typ("TValue*"))
 
                     else:
                         base = L['base']
@@ -964,6 +997,7 @@ def tvisudata(o):
 def udataV(o):
     return gcval(o)['ud'].address
 
+
 UDTYPE_USERDATA = 0
 UDTYPE_IO_FILE = 1
 UDTYPE_FFI_CLIB = 2
@@ -995,6 +1029,7 @@ def cdataV(o):
 def ctype_get(cts, id):
     return cts['tab'][id].address
 
+
 CTSHIFT_NUM = 28
 CT_HASSIZE = 5
 CT_ATTRIB = 8
@@ -1004,6 +1039,7 @@ CTF_VLA = 0x00100000
 
 def ctype_type(info):
     return info >> CTSHIFT_NUM
+
 
 ctype_names = ['num', 'struct', 'ptr', 'array',
                'void', 'enum', 'func', 'typedef', 'attribute', 'field',
@@ -2306,6 +2342,7 @@ def irm_op1(m):
 def irm_op2(m):
     return ((m >> 2) & 3).cast(typ("IRMode"))
 
+
 IRMref = 0
 
 
@@ -2325,6 +2362,7 @@ def litname_SLOAD(mode):
     if (mode & 32) != 0:
         s += "I"
     return s
+
 
 irfield = [
     "str.len", "func.env", "func.pc", "func.ffid", "thread.env",
@@ -2353,6 +2391,7 @@ def litname_CONV(mode):
     elif c == 3:
         s += " check"
     return s
+
 
 irfpm = ["floor", "ceil", "trunc", "sqrt",
          "exp", "exp2", "log", "log2", "log10",
@@ -2397,7 +2436,6 @@ def litname(op):
 
     return None
 
-IR_KSLOT = 30
 
 IR_KPRI = 22
 IR_KINT = 23
@@ -2464,6 +2502,7 @@ def lj_ir_kvalue(ir):
 
     return "unknown", "unknown"
 
+
 IRT_TYPE = 0x1f
 IRT_NUM = 14
 
@@ -2484,6 +2523,7 @@ def tracek(T, idx):
     if slot == -1:
         return (val, it, t, None)
     return (val, it, t, slot)
+
 
 ffnames = [
     "Lua",
@@ -2801,6 +2841,7 @@ def tracesnap(T, sn):
         t.append(SNAP(255, 0, 0).cast(int32_t))
         return t
     return None
+
 
 lj_ir_mode = None
 
@@ -3526,20 +3567,18 @@ class lgcpath(lgcstat):
         sz = self.get_obj_sz(g, gco)
         out("sz:%d (GCobj*)%#x ->END\n" % (sz, ptr2int(gco)))
 
+    intersteded_typs = {
+        ~LJ_TSTR(): 'str',
+        ~LJ_TTAB(): 'tab',
+        ~LJ_TTHREAD(): 'thr',
+        ~LJ_TUPVAL(): 'upval',
+        ~LJ_TFUNC(): 'func',
+        ~LJ_TUDATA(): 'udata',
+        ~LJ_TTRACE(): 'tr',
+    }
+
     def is_intersted_ty(self, ty):
-        if not self.obj_ty:
-            return True
-
-        if ((ty == ~LJ_TSTR() and self.obj_ty == "str") or
-            (ty == ~LJ_TTAB() and self.obj_ty == "tab") or
-            (ty == ~LJ_TTHREAD() and self.obj_ty == "thr") or
-            (ty == ~LJ_TUPVAL() and self.obj_ty == "upval") or
-            (ty == ~LJ_TFUNC() and self.obj_ty == "func") or
-            (ty == ~LJ_TUDATA() and self.obj_ty == "udata") or
-            (ty == ~LJ_TTRACE() and self.obj_ty == "tr")):
-            return True
-
-        return False
+        return not self.obj_ty or self.obj_ty == self.intersteded_typs.get(ty)
 
     def dfs(self, o, g):
         if self.path_idx == 16:
@@ -3976,8 +4015,9 @@ class rawheader(gdb.Command):
 
         first = None
 
-        if (reqline['data'] >= b['start'] and
-            reqline['data'] + reqline['len'] + line_break_len <= b['pos']):
+        reqline_start = reqline['data']
+        reqline_end = reqline['data'] + reqline['len'] + line_break_len
+        if (reqline_start >= b['start'] and reqline_end <= b['pos']):
                 first = b
 
                 if mr['header_in'] == b:
@@ -4109,8 +4149,8 @@ class BCCallMBP (gdb.Breakpoint):
         super(BCCallMBP, self).__init__("lj_BC_CALLM")
 
     def stop(self):
-        RA = gdb.parse_and_eval("$ecx")
-        BASE = gdb.parse_and_eval("$edx").cast(typ("TValue*"))
+        RA = gdb.parse_and_eval(Regs.RA)
+        BASE = gdb.parse_and_eval(Regs.BASE).cast(typ("TValue*"))
         fntv = BASE[RA]
 
         hit = False
@@ -4131,9 +4171,9 @@ class BCCallMBP (gdb.Breakpoint):
         # out("multres: %d" % MULTRES)
         out("Entry breakpoint hit at\n")
         dump_tvalue(fntv)
-        pc = gdb.parse_and_eval("$ebx").cast(typ("BCIns*")) - 1
+        pc = gdb.parse_and_eval(Regs.PC).cast(typ("BCIns*")) - 1
         locate_pc(pc, False)
-        RC = gdb.parse_and_eval("$al") + MULTRES
+        RC = gdb.parse_and_eval(Regs.RCL) + MULTRES
         RC -= 1
 
         if RC == 0:
@@ -4152,8 +4192,8 @@ class BCCallBP (gdb.Breakpoint):
         super(BCCallBP, self).__init__("lj_BC_CALL")
 
     def stop(self):
-        RA = gdb.parse_and_eval("$ecx")
-        BASE = gdb.parse_and_eval("$edx").cast(typ("TValue*"))
+        RA = gdb.parse_and_eval(Regs.RA)
+        BASE = gdb.parse_and_eval(Regs.BASE).cast(typ("TValue*"))
         fntv = BASE[RA]
 
         hit = False
@@ -4172,9 +4212,9 @@ class BCCallBP (gdb.Breakpoint):
 
         out("Entry breakpoint hit at\n")
         dump_tvalue(fntv)
-        pc = gdb.parse_and_eval("$ebx").cast(typ("BCIns*")) - 1
+        pc = gdb.parse_and_eval(Regs.PC).cast(typ("BCIns*")) - 1
         locate_pc(pc, False)
-        RC = gdb.parse_and_eval("$al")
+        RC = gdb.parse_and_eval(Regs.RCL)
         RC -= 1
 
         if RC == 0:
@@ -4193,8 +4233,8 @@ class BCCallTBP (gdb.Breakpoint):
         super(BCCallTBP, self).__init__("lj_BC_CALLT")
 
     def stop(self):
-        RA = gdb.parse_and_eval("$ecx")
-        BASE = gdb.parse_and_eval("$edx").cast(typ("TValue*"))
+        RA = gdb.parse_and_eval(Regs.RA)
+        BASE = gdb.parse_and_eval(Regs.BASE).cast(typ("TValue*"))
         fntv = BASE[RA]
 
         hit = False
@@ -4213,10 +4253,10 @@ class BCCallTBP (gdb.Breakpoint):
 
         out("Entry breakpoint hit at\n")
         dump_tvalue(fntv)
-        pc = gdb.parse_and_eval("$ebx").cast(typ("BCIns*")) - 1
+        pc = gdb.parse_and_eval(Regs.PC).cast(typ("BCIns*")) - 1
         # out("pc = %#x" % ptr2int(pc))
         locate_pc(pc, False)
-        RD = gdb.parse_and_eval("$eax")
+        RD = gdb.parse_and_eval(Regs.RC)
         RD -= 1
         out("Taking %d arguments:\n" % RD)
         for i in xrange(0, RD):
@@ -4472,9 +4512,9 @@ class BCRetBP (gdb.Breakpoint):
     ret_count = None
 
     def stop(self):
-        RA = gdb.parse_and_eval("$ecx")
-        BASE = gdb.parse_and_eval("$edx").cast(typ("TValue*"))
-        pc = gdb.parse_and_eval("$ebx").cast(typ("BCIns*")) - 1
+        RA = gdb.parse_and_eval(Regs.RA)
+        BASE = gdb.parse_and_eval(Regs.BASE).cast(typ("TValue*"))
+        pc = gdb.parse_and_eval(Regs.PC).cast(typ("BCIns*")) - 1
         # fntv = BASE[RA]
 
         # ins = pc.dereference()
@@ -4491,10 +4531,10 @@ class BCRetBP (gdb.Breakpoint):
         rec = FuncReturnTargets[key]
 
         # dump_tvalue(fntv)
-        # pc = gdb.parse_and_eval("$ebx").cast(typ("BCIns*")) - 1
+        # pc = gdb.parse_and_eval(Regs.PC).cast(typ("BCIns*")) - 1
         # locate_pc(pc, False)
         if self.ret_count is None:
-            RD = gdb.parse_and_eval("$eax")
+            RD = gdb.parse_and_eval(Regs.RC)
             RD -= 1
         else:
             RD = self.ret_count
@@ -4655,6 +4695,7 @@ class TraceEventBP (gdb.Breakpoint):
 
         return True
 
+
 TraceEventBPs = []
 
 
@@ -4742,3 +4783,53 @@ Usage: ldumpstack (lua_State *)"""
 
 
 ldumpstack()
+
+
+def is_gc64():
+    t_MRef = gdb.lookup_type('MRef')
+    t_GCRef = gdb.lookup_type('GCRef')
+    try:
+        fld_m = t_MRef['ptr64']
+        fld_gc = t_GCRef['gcptr64']
+        return True
+    except KeyError:
+        return False
+
+
+def check_GC_size():
+    if is_gc64():
+        LJ_GCVMASK = 2**47 - 1
+
+        def mref(r, t):
+            return r['ptr64'].cast(typ(t + "*"))
+
+        def gcrefp(r, t):
+            return r['gcptr64'].cast(typ(t + "*"))
+
+        def gcref(r):
+            return gcrefp(r, 'GCobj')
+
+        def gcval(o):
+            return (o['gcr']['gcptr64'] & LJ_GCVMASK).cast(typ('GCobj*'))
+
+        def itype(o):
+            return (o['it64'] >> 47).cast(typ('uint32_t'))
+
+        def frame_gc(f):
+            return gcval(f-1)
+
+        def frame_ftsz(f):
+            return f['ftsz']
+
+        def frame_pc(f):
+            return f['ftsz'].cast(typ('BCIns *'))
+            #return mref(f['ftsz'], 'BCIns')
+
+        def frame_contpc(f):
+            return frame_pc(f - 2)
+
+        def frame_prevl(f):
+            return f - (2 + bc_a(frame_pc(f)[-1]))
+
+
+gdb.events.new_objfile.connect(check_GC_size())
