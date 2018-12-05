@@ -370,7 +370,7 @@ def debug_framepc(L, T, fn, pt, nextframe):
         try:
             if not cf or cframe_pc(cf) == cframe_L(cf):
                 return NO_BCPOS
-        except:
+        except Exception:
             return NO_BCPOS
         ins = cframe_pc(cf)
         # print("cframe pc: [0x%x]" % ptr2int(ins))
@@ -391,7 +391,7 @@ def debug_framepc(L, T, fn, pt, nextframe):
         # print("T: %d" % int(T['traceno']))
         try:
             pos = proto_bcpos(pt, mref(T['startpc'], "BCIns"))
-        except:
+        except Exception:
             return NO_BCPOS
     return pos
 
@@ -674,7 +674,7 @@ Usage: lbt [L]
             if not base:
                 try:
                     base = tvref(g['saved_jit_base'])
-                except:
+                except Exception:
                     pass
 
             if not base:
@@ -714,6 +714,7 @@ Usage: lbt [L]
                 else:
                     out("No Lua code running.\n")
                     return
+
 
 lbt()
 
@@ -759,6 +760,7 @@ Usage: lvmst [L]"""
             # print "vmstate = %d" % vmstate
             out("current VM state: %s\n" % vmstates[~vmstate])
 
+
 lvmst()
 
 
@@ -777,6 +779,7 @@ Usage: lmainL"""
         L = get_global_L()
         out("(lua_State*)0x%x\n" % ptr2int(L))
 
+
 lmainL()
 
 
@@ -794,6 +797,7 @@ Usage: lcurL"""
 
         L = get_cur_L()
         out("(lua_State*)0x%x\n" % ptr2int(L))
+
 
 lcurL()
 
@@ -820,6 +824,7 @@ Usage: lglobtab [L]"""
         # print "g: ", hex(int(L['glref']['ptr32']))
 
         out("(GCtab*)0x%x\n" % ptr2int(tabref(L['env'])))
+
 
 lglobtab()
 
@@ -1335,6 +1340,7 @@ Usage: lval tv"""
 
         dump_tvalue(o, True)
 
+
 lval()
 
 
@@ -1379,8 +1385,9 @@ class ltabkeys(gdb.Command):
                     gcs = strV(k)
                     try:
                         out("\"%s\"\n" % lstr2str(gcs).replace('\0', r'\0'))
-                    except:
+                    except Exception:
                         out("\t\t[[python error reading string]]")
+
 
 ltabkeys()
 
@@ -1679,6 +1686,7 @@ Usage: lproto file lineno"""
                                 (ptr2int(pt), path, lineno))
             p = o['gch']['nextgc'].address
 
+
 lproto()
 
 
@@ -1776,6 +1784,7 @@ Usage: lfunc file lineno"""
             path = hit[1]
             out("Found Lua function (GCfunc*)0x%x at %s:%d\n" % (ptr2int(fn), path, lineno))
 
+
 lfunc()
 
 
@@ -1795,6 +1804,7 @@ Usage: luv fn"""
         # print str(fn)
         pt = funcproto(fn)
         dump_upvalues(fn, pt)
+
 
 luv()
 
@@ -1858,6 +1868,7 @@ Usage: lfenv tv"""
         else:
             out("TODO")
 
+
 lfenv()
 
 
@@ -1879,6 +1890,7 @@ Usage: lg [L]"""
             L = get_global_L()
 
         out("(global_State*)0x%x\n" % ptr2int(G(L)))
+
 
 lg()
 
@@ -1977,6 +1989,7 @@ Usage: ltrace [traceno]"""
             path = lstr2str(name)
             out("%s:%d\n" % (path, line))
 
+
 ltrace()
 
 
@@ -2059,6 +2072,7 @@ Usage: lpc pc"""
 
         locate_pc(pc, True)
 
+
 lpc()
 
 
@@ -2097,6 +2111,7 @@ Usage: lringbuf"""
                     else:
                         raise gdb.GdbError("bad thing happened: start=%d, end=%d, full=%d" %
                                            (int(start), int(end), int(rblen)))
+
 
 lringbuf()
 
@@ -2161,6 +2176,7 @@ Usage: ltracelogs"""
                 else:
                     raise gdb.GdbError("bad thing happened: start=%d, end=%d, full=%d"
                                        % (int(start), int(end), int(rblen)))
+
 
 ltracelogs()
 
@@ -2292,6 +2308,7 @@ def regname64(r):
     if r < 16:
         return map_regs_Q[int(r + 1 - 1)]
     return map_regs_X[int(r - 15 - 1)]
+
 
 irtype = [
   "nil",
@@ -3080,6 +3097,7 @@ Usage: lir traceno"""
                 out("....              SNAP   #%-3d [ " % snapno)
                 printsnap(T, snap)
 
+
 lir()
 
 
@@ -3102,6 +3120,7 @@ Usage: lgc [L]"""
 
         g = G(L)
         out("The current memory size (allocated by GC): %d bytes\n" % int(g['gc']['total']))
+
 
 lgc()
 
@@ -3224,7 +3243,7 @@ Usage: lgcstat"""
                 len += 1
                 k = mref(k['next'], "K64Array")
             sz = typ("K64Array").sizeof * len
-        except:
+        except Exception:
             pass
 
         sz += J['sizesnapmap'] * typ("SnapEntry").sizeof
@@ -3317,6 +3336,7 @@ Usage: lgcstat"""
 
         return 0
 
+
 lgcstat()
 
 
@@ -3393,7 +3413,7 @@ class lgcpath(lgcstat):
         try:
             dummy = self.visited[ptr2int(n)]
             return 1
-        except:
+        except Exception:
             return 0
 
     def set_visited(self, n):
@@ -3434,7 +3454,7 @@ class lgcpath(lgcstat):
         fnaddr = ptr2int(fn)
         try:
             annot = self.obj_annot[fnaddr]
-        except:
+        except Exception:
             annot = 0
         component = annot >> 30
         idx = annot & ((1 << 30) - 1)
@@ -3452,7 +3472,7 @@ class lgcpath(lgcstat):
 
         try:
             annot = self.obj_annot[thraddr]
-        except:
+        except Exception:
             annot = 0
 
         component = annot >> 30
@@ -3489,7 +3509,7 @@ class lgcpath(lgcstat):
 
         try:
             annot = self.obj_annot[tabaddr]
-        except:
+        except Exception:
             annot = 0
 
         component = annot >> 30
@@ -3697,7 +3717,7 @@ class lgcpath(lgcstat):
         # Remove the annotation
         try:
             del self.obj_annot[tabaddr]
-        except:
+        except Exception:
             pass
 
     def visit_func(self, fn, g):
@@ -3750,6 +3770,7 @@ class lgcpath(lgcstat):
         if trno != 0:
             tr = obj2gco(traceref(G2J(g), trno))
             self.dfs(tr, g)
+
 
 lgcpath()
 
@@ -3932,6 +3953,7 @@ Usage: lbc <from> <to>"""
         else:
             out("-- ABROT BYTECODE -- %s\n" % pc2loc(pt, pc - 1))
 
+
 lbc()
 
 
@@ -3957,6 +3979,7 @@ Usage: lcq <from> <to>"""
             diff = node['expire'] - time
             out("ttl: %f\n" % diff)
             node = node['next']
+
 
 lcq()
 
@@ -3984,6 +4007,7 @@ Usage: lthreadpc <L>"""
             locate_pc(pc.cast(typ("BCIns*")), False)
         else:
             raise gdb.GdbError("Lua thread in bad state")
+
 
 lthreadpc()
 
@@ -4086,6 +4110,7 @@ class rawheader(gdb.Command):
         if last > size:
             raise gdb.GdbError("buffer error: " + (last - size))
 
+
 rawheader()
 
 
@@ -4135,6 +4160,7 @@ Usage: ltracebymcode [addr]"""
                 if name:
                     path = lstr2str(name)
                     out("%s:%d\n" % (path, line))
+
 
 ltracebymcode()
 
@@ -4327,6 +4353,7 @@ Usage: lb <spec>"""
                 if not bp.is_valid():
                     bp.__init__()
 
+
 lb()
 
 
@@ -4342,7 +4369,7 @@ def removeAllEntryBPs():
         gdb.execute("clear lj_BC_CALLM")
         gdb.execute("clear lj_BC_CALLT")
 
-    except:
+    except Exception:
         pass
 
 
@@ -4358,7 +4385,7 @@ def removeAllReturnBPs():
         gdb.execute("clear lj_BC_RET0")
         gdb.execute("clear lj_BC_RET1")
 
-    except:
+    except Exception:
         pass
 
 
@@ -4370,7 +4397,7 @@ def removeAllTraceEventBPs():
     try:
         gdb.execute("clear lj_trace_log_event")
 
-    except:
+    except Exception:
         pass
 
 
@@ -4458,6 +4485,7 @@ Usage: ldel [spec]"""
             else:
                 raise gdb.GdbError("Bad spec: %s" % spec)
 
+
 ldel()
 
 
@@ -4498,6 +4526,7 @@ Usage: linfob [spec]"""
 
         if len(TraceEventBPs) > 0:
             out("trace\t-\t-\n")
+
 
 linfob()
 
@@ -4640,6 +4669,7 @@ Usage: lrb <spec>"""
                 if not bp.is_valid():
                     bp.__init__()
 
+
 lrb()
 
 
@@ -4723,6 +4753,7 @@ Usage: ltb"""
             for bp in TraceEventBPs:
                 if not bp.is_valid():
                     bp.__init__()
+
 
 ltb()
 
