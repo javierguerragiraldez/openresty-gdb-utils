@@ -10,8 +10,8 @@ from collections import defaultdict, namedtuple
 
 
 Registers = namedtuple('Registers', [
-    'BASE', 'KBASE', 'PC'
-    'RA', 'RB', 'RC'
+    'BASE', 'KBASE', 'PC',
+    'RA', 'RB', 'RC', 'RCL',
     ])
 
 architecture = os.uname().machine
@@ -4796,8 +4796,16 @@ def is_gc64():
         return False
 
 
-def check_GC_size():
-    if is_gc64():
+_actual_GC_size = None
+
+
+def check_GC_size(o):
+    global _actual_GC_size
+    if _actual_GC_size is not None:
+        return
+
+    _actual_GC_size = is_gc64()
+    if _actual_GC_size:
         LJ_GCVMASK = 2**47 - 1
 
         def mref(r, t):
@@ -4832,4 +4840,4 @@ def check_GC_size():
             return f - (2 + bc_a(frame_pc(f)[-1]))
 
 
-gdb.events.new_objfile.connect(check_GC_size())
+gdb.events.new_objfile.connect(check_GC_size)
