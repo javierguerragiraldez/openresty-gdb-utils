@@ -1272,7 +1272,7 @@ def dump_tvalue(o, deep=False):
         dump_table(tabV(o))
 
     else:
-        out("\t\t%s: (TValue*)%#x\n" % (ltype(o), ptr2int(o)))
+        out("\t\t%s: (TValue*)%#x\n" % (ltype(o), gcval(o)))
 
 
 class lval(gdb.Command):
@@ -3809,7 +3809,7 @@ def ctlsub(s):
 
 def pc2proto(pc):
     i = 0
-    while pc and i < 1000000:
+    while pc and pc.address and i < 1000000:
         ins = pc[-i]
         # print("ins: %d" % int(ins))
         oidx = int(6 * (ins & 0xff))
@@ -4769,11 +4769,41 @@ def backtrace(L, f):
             return typeps[t]
         return '--'
 
-    stack = mref(L['stack'], 'TValue')
-    while f > stack and frame_type(f) < 3:
-        out("f: %d, type: %d, typep: %d, %s, prev: %d\n" %
-            (f-L['base'], frame_type(f), frame_typep(f), ftyp(f), frame_prev(f)-L['base']))
+    def jumpframe(f):
+        stack = mref(L['stack'], 'TValue')
+        while f and f > stack and frame_type(f) < 3:
+            print("f", f, "f:pc:", frame_pc(f), frame_pc(f).address)
+            if not frame_pc(f).address:
+                break
+            yield f
         f = frame_prev(f)
+
+    def frame_desc(f):
+        t = ftyp(f)
+        if t not in {'FRAME_LUA', 'FRAME_LUAP', 'FRAME_CONT'}:
+            return '--', (None, None)
+
+        # TODO: there must be some indication on the stack managed by compiled vs interpreted code
+
+        if t == 'FRAME_CONT':
+            pc = frame_contpc(f)
+        else:
+            pc = frame_pc(f)
+
+        pt = pc2proto(pc)
+        if not pt:
+            return '--', (None, None)
+        pos = proto_bcpos(pt, pc) - 1
+        name = proto_chunkname(pt)
+        o = '--'
+        if name:
+            o = lstr2str(name)
+        line = lj_debug_line(pt, pos)
+        return '%s:%d' % (o, line), (pt, pc)
+
+    base = L['base']
+    return {int(frame_prev(f)-base): frame_desc(f)
+            for f in jumpframe(f)}
 
 
 class ldumpstack(gdb.Command):
@@ -4795,23 +4825,24 @@ Usage: ldumpstack (lua_State *)"""
 
         top = lua_gettop(L)
 
-        #for x in range(top):
-            #out("index = %d\n" % (x + 1))
-            #tv = stkindex2adr(L, x + 1)
-            #gdb.execute("lval 0x%x" % ptr2int(tv))
-
         stack = mref(L['stack'], 'TValue')
         base = L['base']
         top = L['top']
         maxstack = mref(L['maxstack'], 'TValue')
-        #out("stack: %r, base=stack+%r, top=base+%d, total slots:%d, interesting:%d\n" %
-            #(stack, base-stack, top-base, maxstack-stack, top-stack))
+
+        frames = backtrace(L, top-1)
+        frmindex, pt, pc = None, None, None
 
         for i in range(top-stack):
-            out("%4d:%016X" % (i-(base-stack), stack[i]['u64']))
-            dump_tvalue(stack[i])
-
-        backtrace(L, base-1)
+            index = int(i-(base-stack))
+            out("%4d:%016X" %
+                (index, (int(stack[i]['u64']) & 0xffffffffffffffff)))
+            if index in frames:
+                frmdesc, (pt, pc) = frames[index]
+                frmindex = index
+                out("\tframe: %s\n" % frmdesc)
+            else:
+                dump_tvalue(stack[i])
 
 
 ldumpstack()
@@ -4828,16 +4859,19 @@ def is_gc64():
         return False
 
 
-_actual_GC_size = None
+def check_GC_size(o=None):
+    if is_gc64():
+        global mref
+        global gcrefp
+        global gcref
+        global gcval
+        global itype
+        global frame_gc
+        global frame_ftsz
+        global frame_pc
+        global frame_contpc
+        global frame_prevl
 
-
-def check_GC_size(o):
-    global _actual_GC_size
-    if _actual_GC_size is not None:
-        return
-
-    _actual_GC_size = is_gc64()
-    if _actual_GC_size:
         LJ_GCVMASK = 2**47 - 1
 
         def mref(r, t):
@@ -4869,7 +4903,11 @@ def check_GC_size(o):
             return frame_pc(f - 2)
 
         def frame_prevl(f):
+            pc = frame_pc(f)
+            if not pc or not pc.address or not pc[-1].address:
+                return None
             return f - (2 + bc_a(frame_pc(f)[-1]))
 
 
 gdb.events.new_objfile.connect(check_GC_size)
+check_GC_size()
