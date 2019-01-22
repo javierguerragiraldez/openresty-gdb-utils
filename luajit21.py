@@ -1268,8 +1268,11 @@ def dump_tvalue(o, deep=False):
         th = gcval(o)['th'].address
         out("\t\tthread: (lua_State*)%#x\n" % ptr2int(th))
 
-    elif deep and tvistab(o):
-        dump_table(tabV(o))
+    elif tvistab(o):
+        if deep:
+            dump_table(tabV(o))
+        else:
+            out("\t\ttable: (GCtab*)%#x\n" % gcval(o))
 
     else:
         out("\t\t%s: (TValue*)%#x\n" % (ltype(o), gcval(o)))
@@ -4849,14 +4852,16 @@ ldumpstack()
 
 
 def is_gc64():
-    t_MRef = gdb.lookup_type('MRef')
-    t_GCRef = gdb.lookup_type('GCRef')
     try:
+        t_MRef = gdb.lookup_type('MRef')
+        t_GCRef = gdb.lookup_type('GCRef')
         fld_m = t_MRef['ptr64']
         fld_gc = t_GCRef['gcptr64']
         return True
     except KeyError:
         return False
+    except Exception:
+        return None
 
 
 def check_GC_size(o=None):
