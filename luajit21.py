@@ -1727,8 +1727,8 @@ def dump_upvalues(fn, pt):
         uv = gcref(uvptr[idx])['uv'].address
         tvp = uvval(uv)
         name = lj_debug_uvname(pt, idx)
-        out("upvalue \"%s\": value=(TValue*)0x%x value_type=%s closed=%d\n" %
-            (name, ptr2int(tvp), ltype(tvp), int(uv['closed'])))
+        out("upvalue #%d \"%s\": value=(TValue*)0x%x value_type=%s closed=%d\n" %
+            (idx, name, ptr2int(tvp), ltype(tvp), int(uv['closed'])))
 
 
 def find_lfunc_by_src_loc(fname, lineno):
@@ -2492,6 +2492,10 @@ def ir_knum(ir):
     return mref(ir['ptr'], "TValue")
 
 
+def ir_kptr(ir):
+    return mref(ir['ptr'], "void")
+
+
 def ir_kint64(ir):
     return mref(ir['ptr'], 'TValue')
 
@@ -2513,7 +2517,7 @@ def lj_ir_kvalue(ir):
         return 0, "userdata"
 
     if t == IR_KPTR or t == IR_KKPTR:
-        return ptr2int(mref(ir['ptr'], "void")), "userdata"
+        return ptr2int(ir_kptr(ir)), "userdata"
 
     if t == IR_KNUM:
         return float((ir[1]['tv']['n'])), "number"
@@ -4880,6 +4884,7 @@ def check_GC_size(o=None):
         global gcval
         global itype
         global ir_kgc
+        global ir_kptr
         global frame_gc
         global frame_ftsz
         global frame_pc
@@ -4905,6 +4910,9 @@ def check_GC_size(o=None):
 
         def ir_kgc(ir):
             return gcref(ir[1]['gcr'])
+
+        def ir_kptr(ir):
+            return mref(ir[1]['ptr'], "void")
 
         def frame_gc(f):
             return gcval(f-1)
