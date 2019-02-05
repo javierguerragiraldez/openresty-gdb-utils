@@ -2384,8 +2384,9 @@ def litname_SLOAD(mode):
     return s
 
 
+# must be identical to irfield from jit/vmdef.lua
 irfield = [
-    "str.len", "func.env", "func.pc", "func.ffid", "thread.env",
+    "str.len", "func.env", "func.pc", "func.ffid", "thread.env", "thread.exdata",
     "tab.meta", "tab.array", "tab.node", "tab.asize", "tab.hmask", "tab.nomm",
     "udata.meta", "udata.udtype", "udata.file",
     "cdata.ctypeid", "cdata.ptr", "cdata.int", "cdata.int64", "cdata.int64_4"]
@@ -2545,6 +2546,7 @@ def tracek(T, idx):
     return (val, it, t, slot)
 
 
+# this must be identical to the ffnames from jit/vmdef.lua
 ffnames = [
     "Lua",
     "C",
@@ -2561,6 +2563,7 @@ ffnames = [
     "rawget",
     "rawset",
     "rawequal",
+    "rawlen",
     "unpack",
     "select",
     "tonumber",
@@ -2578,6 +2581,7 @@ ffnames = [
     "print",
     "coroutine.status",
     "coroutine.running",
+    "coroutine.isyieldable",
     "coroutine.create",
     "coroutine.yield",
     "coroutine.resume",
@@ -2640,6 +2644,7 @@ ffnames = [
     "table.insert",
     "table.concat",
     "table.sort",
+    "table.pack",
     "table.new",
     "table.clear",
     "io.method.close",
@@ -2685,6 +2690,8 @@ ffnames = [
     "debug.setupvalue",
     "debug.upvalueid",
     "debug.upvaluejoin",
+    "debug.getuservalue",
+    "debug.setuservalue",
     "debug.sethook",
     "debug.gethook",
     "debug.debug",
@@ -2736,6 +2743,7 @@ ffnames = [
     "ffi.new",
     "ffi.cast",
     "ffi.typeof",
+    "ffi.typeinfo",
     "ffi.istype",
     "ffi.sizeof",
     "ffi.alignof",
