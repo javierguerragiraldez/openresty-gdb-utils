@@ -2515,10 +2515,10 @@ def lj_ir_kvalue(ir):
         return ptr2int(mref(ir['ptr'], "void")), "userdata"
 
     if t == IR_KNUM:
-        return float(ir_knum(ir)['n']), "number"
+        return float((ir[1]['tv']['n'])), "number"
 
     if t == IR_KINT64:
-        return int(ir_kint64(ir)['u64']), "cdata"
+        return int(ir[1]['tv']['u64']), "cdata"
 
     return "unknown", "unknown"
 
@@ -3812,7 +3812,7 @@ def ctlsub(s):
 
 def pc2proto(pc):
     i = 0
-    while pc and pc.address and i < 1000000:
+    while pc and i < 1000000:
         ins = pc[-i]
         # print("ins: %d" % int(ins))
         oidx = int(6 * (ins & 0xff))
@@ -4871,6 +4871,7 @@ def check_GC_size(o=None):
         global gcref
         global gcval
         global itype
+        global ir_kgc
         global frame_gc
         global frame_ftsz
         global frame_pc
@@ -4893,6 +4894,9 @@ def check_GC_size(o=None):
 
         def itype(o):
             return (o['it64'] >> 47).cast(typ('uint32_t'))
+
+        def ir_kgc(ir):
+            return gcref(ir[1]['gcr'])
 
         def frame_gc(f):
             return gcval(f-1)
