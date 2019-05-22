@@ -282,6 +282,10 @@ def frame_prev(f):
         return frame_prevd(f)
 
 
+def top_frame(L):
+    return L['top']-1
+
+
 def tvref(r):
     return mref(r, "TValue")
 
@@ -4836,7 +4840,11 @@ Usage: ldumpstack (lua_State *)"""
             #raise gdb.GdbError("1 argument expected!\nusage: ltb <lua_State *>")
 
         #L = gdbutils.parse_ptr(argv[0], "lua_State*")
-        L = get_global_L()
+        if len(argv) == 1:
+            L = gdbutils.parse_ptr(argv[0], "lua_State*")
+        else:
+            L = get_cur_L()
+            #L = get_global_L()
 
         top = lua_gettop(L)
 
@@ -4845,7 +4853,7 @@ Usage: ldumpstack (lua_State *)"""
         top = L['top']
         maxstack = mref(L['maxstack'], 'TValue')
 
-        frames = backtrace(L, top-1)
+        frames = backtrace(L, top_frame(L))
         frmindex, pt, pc = None, None, None
 
         for i in range(top-stack):
@@ -4890,6 +4898,7 @@ def check_GC_size(o=None):
         global frame_pc
         global frame_contpc
         global frame_prevl
+        global top_frame
 
         LJ_GCVMASK = 2**47 - 1
 
@@ -4932,6 +4941,9 @@ def check_GC_size(o=None):
             if not pc or not pc.address or not pc[-1].address:
                 return None
             return f - (2 + bc_a(frame_pc(f)[-1]))
+
+        def top_frame(L):
+            return L['top']-2
 
 
 gdb.events.new_objfile.connect(check_GC_size)
