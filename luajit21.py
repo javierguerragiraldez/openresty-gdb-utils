@@ -283,7 +283,7 @@ def frame_prev(f):
 
 
 def top_frame(L):
-    return L['top']-1
+    return L['base']-1
 
 
 def tvref(r):
@@ -493,7 +493,7 @@ builtin_variable_names = [
 ]
 
 
-def debug_varname(pt, pc, slot):
+def get_varname(pt, pc, slot):
     p = proto_varinfo(pt).cast(typ("char*"))
     if p:
         lastpc = 0
@@ -518,13 +518,18 @@ def debug_varname(pt, pc, slot):
             endpc = startpc + v
             if pc < endpc and slot == 0:
                 if vn < VARNAME__MAX:
-                    out("\tlocal \"%s\"\n" % builtin_variable_names[int(vn - 1)])
+                    return builtin_variable_names[int(vn - 1)]
                 else:
-                    out("\tlocal \"%s\":\n" % name.string('iso-8859-6', 'ignore'))
-                return True
+                    return name.string('iso-8859-6', 'ignore')
             slot = slot - 1
     return False
 
+
+def debug_varname(pt, pc, slot):
+    vn = get_varname(pt, pc, slot)
+    if vn:
+        out("\tlocal \"%s\":\n" % vn)
+    return vn
 
 def lj_debug_dumpstack(L, T, depth, base, full):
     global cfunc_cache
@@ -4943,7 +4948,7 @@ def check_GC_size(o=None):
             return f - (2 + bc_a(frame_pc(f)[-1]))
 
         def top_frame(L):
-            return L['top']-2
+            return L['base']-2
 
 
 gdb.events.new_objfile.connect(check_GC_size)
